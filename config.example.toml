@@ -1,0 +1,30 @@
+# s3tui uses the same config format as https://github.com/sj14/sss
+#
+# Location (first match wins):
+#   ~/.config/s3tui/config.toml
+#   ~/.config/sss/config.toml
+# or -config <path> / $S3TUI_CONFIG.
+#
+# No profile is special: s3tui asks which one to use when it starts.
+
+[profiles.earth]
+endpoint = "https://earth.example.com"
+region = "earth"
+access_key = "<CHANGE_ME>"
+secret_key = "<CHANGE_ME>"
+
+[profiles.mars]
+endpoint = "https://mars.example.com"
+region = "mars"
+access_key = "<CHANGE_ME>"
+secret_key = "<CHANGE_ME>"
+path_style = true
+insecure = true
+read_only = true
+network = "tcp6"
+bandwidth = "128 MiB"
+
+# For plain AWS, the endpoint can be omitted and the credentials can come from
+# the usual AWS sources (environment, ~/.aws/credentials, SSO, ...):
+[profiles.aws]
+region = "eu-central-1"
