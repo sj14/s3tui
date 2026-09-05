@@ -70,6 +70,7 @@ configured region are reached through a region specific client.
 | `enter`            | Open the selection                                                         |
 | `esc`, `backspace` | Back one level                                                             |
 | `u`                | Upload: opens a local file browser for the current prefix                  |
+| `r`                | In that browser: upload objects of random data, asked as `1 MiB 10`        |
 | `l`                | Load, i.e. download the selected object, prefix or version                 |
 | `c` / `m`          | Server-side copy / move of the selection                                   |
 | `d`                | Delete the selection (object, prefix, version, multipart upload, document) |

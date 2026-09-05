@@ -30,6 +30,7 @@ Inside `internal/ui`:
 | `delete.go`   | delete, batch delete, abort multipart, and their questions   |
 | `stats.go`    | the bucket scan, what it adds up and how it is rendered      |
 | `transfers.go` | the list of running and finished transfers and its view     |
+| `random.go`   | put-rand: objects of random data, without a file on disk     |
 | `config.go`   | the table of bucket and object configurations, its target and the JSON helpers |
 | `edit.go`     | editing a configuration in `$EDITOR` and writing it back      |
 | `popup.go`    | the error box and the overlay that draws it over the view    |
@@ -219,6 +220,19 @@ bar sat at zero until the last byte. And the manager writes a whole part in one
 `WriteAt`, which is the only moment the counter can advance: `downloadPartSize`
 is therefore 1 MiB rather than the SDK default of 5, with the concurrency
 raised to keep a comparable amount of data in flight.
+
+### Why the random upload sits in the file browser
+
+`put-rand` fills a bucket with objects that never existed on disk, which is how
+a test of an endpoint starts. It is reached with `r` from the file browser
+because that is already the "where does an upload come from" screen – only here
+the answer is "from nowhere", and the browser listing is beside the point, so
+the prompt takes over and the view goes back to the objects.
+
+Size and count are one prompt, not two: the line is parsed from the right, so
+the last word is the count when it is a number ("1 MiB 10") and the whole line
+is the size when it is not ("4 KiB"). `randomReader` streams the noise into the
+uploader instead of building it, so a run of 10 × 5 GiB costs no memory.
 
 ### Why the hard delete is a second key
 

@@ -9,6 +9,7 @@ type keyMap struct {
 	Open      key.Binding
 	Back      key.Binding
 	Upload    key.Binding
+	Random    key.Binding
 	Download  key.Binding
 	Copy      key.Binding
 	Move      key.Binding
@@ -31,6 +32,7 @@ func defaultKeys() keyMap {
 		Open:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
 		Back:      key.NewBinding(key.WithKeys("esc", "backspace"), key.WithHelp("esc", "back")),
 		Upload:    key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "upload")),
+		Random:    key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "random objects")),
 		Download:  key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "download")),
 		Copy:      key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "copy")),
 		Move:      key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "move")),
@@ -100,7 +102,7 @@ func (v viewHelp) ShortHelp() []key.Binding {
 
 		return append(bindings, k.Back, k.Help)
 	case viewPicker:
-		return []key.Binding{k.Open, k.Upload, k.Back, k.Help}
+		return []key.Binding{k.Open, k.Upload, k.Random, k.Back, k.Help}
 	}
 
 	return k.ShortHelp()
@@ -112,7 +114,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 		{k.Quit, k.Help},
 		{k.Up, k.Down, k.Page},
 		{k.Open, k.Back, k.Filter, k.Search},
-		{k.Upload, k.Download, k.Copy, k.Move},
+		{k.Upload, k.Random, k.Download, k.Copy, k.Move},
 		{k.Delete, k.Versions, k.Edit},
 		{k.Transfers, k.Cancel},
 	}

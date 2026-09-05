@@ -490,6 +490,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.openLocal()
 		case key.Matches(msg, m.keys.Upload):
 			return m.askUpload()
+		case key.Matches(msg, m.keys.Random):
+			return m.askRandomUpload()
 		case key.Matches(msg, m.keys.Transfers):
 			return m.openTransfers()
 		}
