@@ -16,6 +16,15 @@ func TestDeleteObjectAsksFirst(t *testing.T) {
 	inner.objects.Select(1) // file.txt
 	model = press(t, tea.Model(inner), 'd')
 
+	prompt := model.(Model).prompt
+	if prompt == nil || prompt.kind != promptDeletePrefix {
+		t.Fatal("no editable delete-prefix prompt was opened")
+	}
+	if prompt.input.Value() != "file.txt" {
+		t.Errorf("prompt starts at %q, want selected key", prompt.input.Value())
+	}
+
+	model = submitPrompt(t, model, "file.txt")
 	pending := model.(Model).pending
 	if pending == nil {
 		t.Fatal("no confirmation was asked")
@@ -49,6 +58,7 @@ func TestDeleteCanceled(t *testing.T) {
 	inner := model.(Model)
 	inner.objects.Select(1)
 	model = press(t, tea.Model(inner), 'd')
+	model = submitPrompt(t, model, "file.txt")
 	model = press(t, model, 'n')
 
 	if model.(Model).pending != nil {
@@ -70,6 +80,15 @@ func TestDeletePrefixRecursively(t *testing.T) {
 	inner.objects.Select(0) // the logs/ prefix
 	model = press(t, tea.Model(inner), 'd')
 
+	prompt := model.(Model).prompt
+	if prompt == nil || prompt.kind != promptDeletePrefix {
+		t.Fatal("no editable delete-prefix prompt was opened")
+	}
+	if prompt.input.Value() != "logs/" {
+		t.Errorf("prompt starts at %q, want selected prefix", prompt.input.Value())
+	}
+
+	model = submitPrompt(t, model, "logs/")
 	pending := model.(Model).pending
 	if pending == nil {
 		t.Fatal("no confirmation was asked")
@@ -87,6 +106,38 @@ func TestDeletePrefixRecursively(t *testing.T) {
 	}
 	if status := model.(Model).status; !strings.Contains(status, "deleted 2/2") {
 		t.Errorf("status = %q", status)
+	}
+}
+
+func TestDeleteTypedPrefixRecursively(t *testing.T) {
+	server := fakeS3(t)
+	model := openBucket(t, server)
+
+	inner := model.(Model)
+	inner.objects.Select(0) // the logs/ prefix
+	model = pressNoRun(tea.Model(inner), 'd')
+	prompt := model.(Model).prompt
+	if prompt == nil || prompt.kind != promptDeletePrefix {
+		t.Fatal("no delete-prefix prompt was opened")
+	}
+	if prompt.input.Value() != "logs/" {
+		t.Errorf("prompt starts at %q, want selected prefix", prompt.input.Value())
+	}
+
+	model = submitPrompt(t, model, "logs/")
+	pending := model.(Model).pending
+	if pending == nil || !strings.Contains(pending.question, "recursive") {
+		t.Fatalf("confirmation = %+v, want recursive warning", pending)
+	}
+
+	model = press(t, model, 'y')
+	for _, key := range []string{"logs/nested.log", "logs/old.log"} {
+		if _, ok := server.object(key); ok {
+			t.Errorf("%q was not deleted", key)
+		}
+	}
+	if _, ok := server.object("file.txt"); !ok {
+		t.Error("an object outside the typed prefix was deleted")
 	}
 }
 

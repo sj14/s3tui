@@ -56,6 +56,7 @@ func TestTransfersRunSideBySide(t *testing.T) {
 	inner = model.(Model)
 	inner.objects.Select(1)
 	model = press(t, tea.Model(inner), 'd')
+	model = submitPrompt(t, model, "file.txt")
 	model = press(t, model, 'y')
 
 	got := model.(Model)

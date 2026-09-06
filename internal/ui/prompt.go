@@ -11,6 +11,7 @@ const (
 	promptCopy
 	promptMove
 	promptSearch
+	promptDeletePrefix
 )
 
 func (k promptKind) String() string {
@@ -21,6 +22,8 @@ func (k promptKind) String() string {
 		return "move"
 	case promptSearch:
 		return "search"
+	case promptDeletePrefix:
+		return "delete prefix"
 	default:
 		return "copy"
 	}

@@ -812,6 +812,16 @@ func (m Model) startTransfer(prompt *promptState) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if prompt.kind == promptDeletePrefix {
+		ref := copyRef{bucket: m.bucket, key: target, recursive: true}
+		m.pending = &pendingConfirm{
+			question: "delete every object starting with " + ref.String() + "? (recursive)",
+			action:   func(model Model) (tea.Model, tea.Cmd) { return model.startDeleteOf(ref) },
+		}
+
+		return m, nil
+	}
+
 	client, err := m.client.ForBucket(m.ctx, m.bucket)
 	if err != nil {
 		m.err = fmt.Errorf("resolving bucket region: %w", err)

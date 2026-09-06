@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/sj14/s3tui/internal/awsclient"
@@ -240,17 +241,7 @@ func (m Model) askDelete() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		ref := copyRef{bucket: m.bucket, key: selected.key, recursive: selected.isPrefix}
-
-		question := "delete " + ref.String() + "?"
-		if selected.isPrefix {
-			question = "delete every object below " + ref.String() + "? (recursive)"
-		}
-
-		m.pending = &pendingConfirm{
-			question: question,
-			action:   func(model Model) (tea.Model, tea.Cmd) { return model.startDeleteOf(ref) },
-		}
+		return m.askDeletePrefix(selected.key)
 
 	case viewVersions:
 		selected, ok := m.versions.SelectedItem().(versionItem)
@@ -313,6 +304,22 @@ func (m Model) askDelete() (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// askDeletePrefix asks for a prefix to delete recursively. The selected row
+// pre-fills it, but it remains editable so a prefix need not be visible in the
+// page currently loaded by the object list.
+func (m Model) askDeletePrefix(prefix string) (tea.Model, tea.Cmd) {
+	if m.profileCfg.ReadOnly {
+		m.status = "profile is read-only, delete blocked"
+
+		return m, nil
+	}
+
+	m.prompt = newPrompt(promptDeletePrefix,
+		fmt.Sprintf("delete every object below, in s3://%s", m.bucket), prefix, m.width)
+
+	return m, textinput.Blink
 }
 
 // askDeleteVersions asks before a hard delete: every version and every delete
