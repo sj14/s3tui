@@ -846,25 +846,12 @@ func (m Model) startTransfer(prompt *promptState) (tea.Model, tea.Cmd) {
 			transfer, err = startCopy(m.ctx, client, kind, source, destination)
 		}
 
-	case promptRandom:
-		var spec randomSpec
-
-		spec, err = parseRandomSpec(target)
-		if err == nil {
-			transfer, err = startRandomUpload(m.ctx, client, m.bucket, m.prefix, spec)
-		}
 	}
 
 	if err != nil {
 		m.err = fmt.Errorf("%s: %w", prompt.kind, err)
 
 		return m, nil
-	}
-
-	// the file browser has nothing to do with a random upload, go back to the
-	// listing the objects will show up in
-	if prompt.kind == promptRandom && m.view == viewPicker {
-		m.view = m.prevView
 	}
 
 	return m, m.track(transfer)

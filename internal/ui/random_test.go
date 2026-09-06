@@ -74,15 +74,18 @@ func TestRandomUploadFromTheFileBrowser(t *testing.T) {
 
 	model = pressNoRun(model, 'r')
 
-	prompt := model.(Model).prompt
-	if prompt == nil {
-		t.Fatal("no prompt was opened")
+	form := model.(Model).randomForm
+	if form == nil {
+		t.Fatal("no random upload form was opened")
 	}
-	if prompt.input.Value() != "1 MiB 10" {
-		t.Errorf("the prompt starts at %q", prompt.input.Value())
+	if form.prefix.Value() != "rand/" || form.size.Value() != "1 MiB" || form.count.Value() != "10" {
+		t.Errorf("form defaults = prefix %q, size %q, count %q", form.prefix.Value(), form.size.Value(), form.count.Value())
 	}
 
-	model = submitPrompt(t, model, "1 KiB 3")
+	form.prefix.SetValue("generated")
+	form.size.SetValue("1 KiB")
+	form.count.SetValue("3")
+	model = enter(t, model)
 
 	got := model.(Model)
 	if got.err != nil {
@@ -101,7 +104,7 @@ func TestRandomUploadFromTheFileBrowser(t *testing.T) {
 	}
 
 	for key, body := range uploaded {
-		if !strings.HasPrefix(key, "rand-") || !strings.HasSuffix(key, ".bin") {
+		if !strings.HasPrefix(key, "generated/rand-") || !strings.HasSuffix(key, ".bin") {
 			t.Errorf("unexpected key %q", key)
 		}
 		if len(body) != 1024 {

@@ -11,7 +11,6 @@ const (
 	promptCopy
 	promptMove
 	promptSearch
-	promptRandom
 )
 
 func (k promptKind) String() string {
@@ -22,8 +21,6 @@ func (k promptKind) String() string {
 		return "move"
 	case promptSearch:
 		return "search"
-	case promptRandom:
-		return "random upload"
 	default:
 		return "copy"
 	}

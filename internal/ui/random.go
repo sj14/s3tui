@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/dustin/go-humanize"
 )
 
@@ -169,7 +170,7 @@ func runRandomUpload(ctx context.Context, client *s3.Client, transfer *transfer,
 	}
 }
 
-// askRandomUpload asks how much random data should go into the current prefix.
+// askRandomUpload opens a form for the destination and shape of the data.
 func (m Model) askRandomUpload() (tea.Model, tea.Cmd) {
 	if m.profileCfg.ReadOnly {
 		m.status = "profile is read-only, upload blocked"
@@ -183,10 +184,138 @@ func (m Model) askRandomUpload() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	m.prompt = newPrompt(promptRandom,
-		fmt.Sprintf("random objects into s3://%s/%s, size and count", m.bucket, m.prefix),
-		"1 MiB 10", m.width,
-	)
+	m.randomForm = newRandomUploadForm(m.bucket, "rand/", m.width)
 
 	return m, textinput.Blink
+}
+
+// randomUploadPrefix makes a typed prefix behave like a directory. An empty
+// prefix deliberately means the bucket root.
+func randomUploadPrefix(prefix string) string {
+	prefix = strings.TrimSpace(prefix)
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+
+	return prefix
+}
+
+// randomUploadForm keeps the destination and its shape together so they can
+// be reviewed before any upload begins.
+type randomUploadForm struct {
+	bucket string
+	prefix textinput.Model
+	size   textinput.Model
+	count  textinput.Model
+	focus  int
+}
+
+func newRandomUploadForm(bucket, prefix string, width int) *randomUploadForm {
+	newInput := func(value string) textinput.Model {
+		input := textinput.New()
+		input.Prompt = ""
+		input.SetValue(value)
+		input.Width = max(12, min(48, width-22))
+
+		return input
+	}
+
+	form := &randomUploadForm{
+		bucket: bucket,
+		prefix: newInput(prefix),
+		size:   newInput("1 MiB"),
+		count:  newInput("10"),
+	}
+	form.prefix.Focus()
+
+	return form
+}
+
+func (f *randomUploadForm) update(msg tea.Msg) (*randomUploadForm, tea.Cmd) {
+	var cmd tea.Cmd
+
+	switch f.focus {
+	case 0:
+		f.prefix, cmd = f.prefix.Update(msg)
+	case 1:
+		f.size, cmd = f.size.Update(msg)
+	case 2:
+		f.count, cmd = f.count.Update(msg)
+	}
+
+	return f, cmd
+}
+
+func (f *randomUploadForm) focusField(next int) tea.Cmd {
+	f.prefix.Blur()
+	f.size.Blur()
+	f.count.Blur()
+	f.focus = (next + 3) % 3
+
+	switch f.focus {
+	case 0:
+		return f.prefix.Focus()
+	case 1:
+		return f.size.Focus()
+	default:
+		return f.count.Focus()
+	}
+}
+
+func (f randomUploadForm) view() string {
+	body := styleAccent.Render("random upload") + "\n" +
+		styleDim.Render("s3://"+f.bucket) + "\n\n" +
+		"prefix  " + f.prefix.View() + "\n" +
+		"size    " + f.size.View() + "\n" +
+		"count   " + f.count.View() + "\n\n" +
+		styleDim.Render("tab changes field · enter uploads · esc closes")
+
+	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorAccent).Padding(0, 1).Render(body)
+}
+
+// handleRandomForm edits, closes, or submits the random-upload modal.
+func (m Model) handleRandomForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	form := m.randomForm
+	switch msg.String() {
+	case "esc":
+		m.randomForm = nil
+		return m, nil
+	case "tab", "down":
+		return m, form.focusField(form.focus + 1)
+	case "shift+tab", "up":
+		return m, form.focusField(form.focus - 1)
+	case "enter":
+		spec, err := parseRandomSpec(form.size.Value() + " " + form.count.Value())
+		if err != nil {
+			m.randomForm = nil
+			m.err = fmt.Errorf("random upload: %w", err)
+			return m, nil
+		}
+		if m.client == nil {
+			m.randomForm = nil
+			m.err = fmt.Errorf("random upload: choose a profile first")
+			return m, nil
+		}
+
+		client, err := m.client.ForBucket(m.ctx, m.bucket)
+		if err == nil {
+			var transfer *transfer
+			transfer, err = startRandomUpload(m.ctx, client, m.bucket, randomUploadPrefix(form.prefix.Value()), spec)
+			if err == nil {
+				m.randomForm = nil
+				if m.view == viewPicker {
+					m.view = m.prevView
+				}
+				return m, m.track(transfer)
+			}
+		}
+
+		m.randomForm = nil
+		m.err = fmt.Errorf("random upload: %w", err)
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.randomForm, cmd = form.update(msg)
+	return m, cmd
 }

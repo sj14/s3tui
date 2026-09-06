@@ -106,8 +106,9 @@ type Model struct {
 	transferFrom viewState     // the view t was pressed in
 	confirms     []transferAsk // overwrite questions waiting for an answer
 
-	prompt  *promptState
-	pending *pendingConfirm
+	prompt     *promptState
+	randomForm *randomUploadForm
+	pending    *pendingConfirm
 
 	spinner  spinner.Model
 	progress progress.Model
@@ -441,6 +442,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	if m.randomForm != nil {
+		var cmd tea.Cmd
+		m.randomForm, cmd = m.randomForm.update(msg)
+
+		return m, cmd
+	}
+
 	return m.forwardToList(msg)
 }
 
@@ -465,6 +473,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if m.prompt != nil {
 		return m.handlePrompt(msg)
+	}
+
+	if m.randomForm != nil {
+		return m.handleRandomForm(msg)
 	}
 
 	// While typing a filter, every key belongs to the text input.
@@ -1342,6 +1354,10 @@ func (m Model) View() string {
 
 	if m.err != nil {
 		return overlay(b.String(), m.errorPopup(), m.width)
+	}
+
+	if m.randomForm != nil {
+		return overlay(b.String(), m.randomForm.view(), m.width)
 	}
 
 	return b.String()
