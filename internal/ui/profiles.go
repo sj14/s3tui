@@ -21,18 +21,12 @@ type profileItem struct {
 func (i profileItem) FilterValue() string { return i.name }
 
 func (i profileItem) row(width int, selected bool) string {
-	target := i.profile.Endpoint
-	if target == "" {
-		target = "aws"
-	}
-
 	suffix := ""
 	if i.active {
 		suffix = " [active]"
 	}
 
 	return renderRow(width, selected, false, i.name, suffix,
-		cell(target, 34, false),
 		cell(i.profile.Region, 16, false),
 	)
 }
