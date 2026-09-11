@@ -63,6 +63,14 @@ type Model struct {
 
 	profile    string
 	profileCfg config.Profile
+	profileRun uint64 // identifies responses belonging to the active profile
+	switchRun  uint64 // identifies the newest requested profile switch
+	bucketCtx  context.Context
+	bucketStop context.CancelFunc
+	bucketRun  uint64 // identifies one visit to a bucket, including A -> B -> A
+	loadCtx    context.Context
+	loadStop   context.CancelFunc
+	loadRun    uint64 // identifies the current foreground view load
 
 	view         viewState
 	prevView     viewState // the view the file browser or the profile list was opened from
@@ -122,6 +130,20 @@ type Model struct {
 
 	width  int
 	height int
+}
+
+// bucketScopedMsg belongs to one visit to a bucket. loadScopedMsg narrows that
+// further to one foreground view load. Transfers deliberately use neither:
+// they continue independently when the user navigates elsewhere.
+type bucketScopedMsg struct {
+	run uint64
+	msg tea.Msg
+}
+
+type loadScopedMsg struct {
+	bucketRun uint64
+	loadRun   uint64
+	msg       tea.Msg
 }
 
 // New creates the model.
@@ -193,7 +215,7 @@ func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{tea.SetWindowTitle("s3tui"), m.spinner.Tick}
 
 	if m.client != nil {
-		cmds = append(cmds, listBucketsCmd(m.ctx, m.client))
+		cmds = append(cmds, listBucketsCmd(m.ctx, m.client, m.profileRun))
 	}
 
 	return tea.Batch(cmds...)
@@ -202,6 +224,24 @@ func (m Model) Init() tea.Cmd {
 // Update handles all messages.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case bucketScopedMsg:
+		if msg.run != m.bucketRun {
+			m.inFlight = max(0, m.inFlight-1)
+
+			return m, nil
+		}
+
+		return m.Update(msg.msg)
+
+	case loadScopedMsg:
+		if msg.bucketRun != m.bucketRun || msg.loadRun != m.loadRun {
+			m.inFlight = max(0, m.inFlight-1)
+
+			return m, nil
+		}
+
+		return m.Update(msg.msg)
+
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.help.Width = msg.Width
@@ -223,6 +263,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case bucketsMsg:
 		m.inFlight = max(0, m.inFlight-1)
+		if msg.run != m.profileRun {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.err = fmt.Errorf("listing buckets: %w", msg.err)
+
+			return m, nil
+		}
+
 		m.err = nil
 
 		return m, m.buckets.SetItems(msg.items)
@@ -340,7 +389,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.inFlight++
 			m.renderStats()
 
-			return m, statsPageCmd(m.ctx, m.client, m.stats.bucket, m.stats.run, m.stats.versions, msg.next)
+			return m, m.scopeLoad(statsPageCmd(m.loadContext(), m.client, m.stats.bucket, m.stats.run, m.stats.versions, msg.next))
 		}
 
 		m.stats.running = false
@@ -385,8 +434,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.inFlight++
 
 			model, cmd := m.reloadConfig()
+			updated := model.(Model)
+			versioning := updated.scopeBucket(bucketVersioningCmd(updated.bucketContext(), updated.client, msg.target.bucket))
 
-			return model, tea.Batch(cmd, bucketVersioningCmd(m.ctx, m.client, msg.target.bucket))
+			return model, tea.Batch(cmd, versioning)
 		}
 
 		// show what the bucket holds now, not what was sent
@@ -411,8 +462,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if m.view == viewMultipart && msg.bucket == m.bucket {
 			m.inFlight++
+			ctx := m.startLoad()
 
-			return m, listMultipartCmd(m.ctx, m.client, m.bucket, m.prefix)
+			return m, m.scopeLoad(listMultipartCmd(ctx, m.client, m.bucket, m.prefix))
 		}
 
 		return m, nil
@@ -425,6 +477,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case profileSwitchedMsg:
+		m.inFlight = max(0, m.inFlight-1)
+		if msg.run != m.switchRun {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.err = fmt.Errorf("switching to profile %s: %w", msg.name, msg.err)
+
+			return m, nil
+		}
+
 		return m.applyProfile(msg)
 
 	case transferMsg:
@@ -450,6 +512,67 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m.forwardToList(msg)
+}
+
+func (m *Model) startBucket() context.Context {
+	m.stopBucket()
+	m.bucketCtx, m.bucketStop = context.WithCancel(m.ctx)
+
+	return m.bucketCtx
+}
+
+func (m *Model) stopBucket() {
+	m.stopLoad()
+	m.bucketRun++
+	if m.bucketStop != nil {
+		m.bucketStop()
+	}
+	m.bucketCtx, m.bucketStop = nil, nil
+}
+
+func (m Model) bucketContext() context.Context {
+	if m.bucketCtx != nil {
+		return m.bucketCtx
+	}
+
+	return m.ctx
+}
+
+func (m Model) scopeBucket(cmd tea.Cmd) tea.Cmd {
+	run := m.bucketRun
+
+	return func() tea.Msg { return bucketScopedMsg{run: run, msg: cmd()} }
+}
+
+func (m *Model) startLoad() context.Context {
+	m.stopLoad()
+	m.loadCtx, m.loadStop = context.WithCancel(m.bucketContext())
+
+	return m.loadCtx
+}
+
+func (m *Model) stopLoad() {
+	m.loadRun++
+	if m.loadStop != nil {
+		m.loadStop()
+	}
+	m.loadCtx, m.loadStop = nil, nil
+}
+
+func (m Model) loadContext() context.Context {
+	if m.loadCtx != nil {
+		return m.loadCtx
+	}
+
+	return m.bucketContext()
+}
+
+func (m Model) scopeLoad(cmd tea.Cmd) tea.Cmd {
+	bucketRun, loadRun := m.bucketRun, m.loadRun
+
+	return func() tea.Msg {
+		return loadScopedMsg{bucketRun: bucketRun, loadRun: loadRun, msg: cmd()}
+	}
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -681,8 +804,9 @@ func (m Model) openBucketSection(selected menuItem) (tea.Model, tea.Cmd) {
 	m.objects.SetItems(nil)
 	m.objects.ResetFilter()
 	m.inFlight++
+	ctx := m.startLoad()
 
-	return m, listObjectsCmd(m.ctx, m.client, m.bucket, m.prefix, m.search, m.showDeleted, nil)
+	return m, m.scopeLoad(listObjectsCmd(ctx, m.client, m.bucket, m.prefix, m.search, m.showDeleted, nil))
 }
 
 // mergeObjects appends a page without listing a key twice: the versions of one
@@ -760,6 +884,7 @@ func (m Model) openObjectMenu() (tea.Model, tea.Cmd) {
 
 		return m, nil
 	}
+	m.stopLoad()
 
 	m.objectFrom = m.view
 	m.view = viewObjectMenu
@@ -803,8 +928,9 @@ func (m Model) openConfig(kind configKind, target configTarget) (tea.Model, tea.
 	m.details.SetContent("")
 	m.details.GotoTop()
 	m.inFlight++
+	ctx := m.startLoad()
 
-	return m, configCmd(m.ctx, m.client, target, kind)
+	return m, m.scopeLoad(configCmd(ctx, m.client, target, kind))
 }
 
 // reloadConfig fetches the shown document again, after it was written.
@@ -818,8 +944,9 @@ func (m Model) reloadConfig() (tea.Model, tea.Cmd) {
 
 	m.configText, m.configNote = "", ""
 	m.renderConfig()
+	ctx := m.startLoad()
 
-	return m, configCmd(m.ctx, m.client, m.target, m.configKind)
+	return m, m.scopeLoad(configCmd(ctx, m.client, m.target, m.configKind))
 }
 
 // section renders one titled block of a details view.
@@ -874,8 +1001,9 @@ func (m Model) openMultipart() (tea.Model, tea.Cmd) {
 	m.multipart.SetItems(nil)
 	m.multipart.ResetFilter()
 	m.inFlight++
+	ctx := m.startLoad()
 
-	return m, listMultipartCmd(m.ctx, m.client, m.bucket, m.prefix)
+	return m, m.scopeLoad(listMultipartCmd(ctx, m.client, m.bucket, m.prefix))
 }
 
 // askSearch asks for a prefix to narrow the listing with. S3 can only match
@@ -896,8 +1024,9 @@ func (m Model) runSearch(search string) (tea.Model, tea.Cmd) {
 	m.nextToken = nil
 	m.objects.SetItems(nil)
 	m.inFlight++
+	ctx := m.startLoad()
 
-	return m, listObjectsCmd(m.ctx, m.client, m.bucket, m.prefix, m.search, m.showDeleted, nil)
+	return m, m.scopeLoad(listObjectsCmd(ctx, m.client, m.bucket, m.prefix, m.search, m.showDeleted, nil))
 }
 
 // finishTransfer reports the result and refreshes the listing after an upload.
@@ -935,13 +1064,15 @@ func (m Model) finishTransfer(entry *transfer, msg transferDoneMsg) (tea.Model, 
 		switch m.view {
 		case viewObjects:
 			m.inFlight++
+			ctx := m.startLoad()
 
-			return m, listObjectsCmd(m.ctx, m.client, m.bucket, m.prefix, m.search, m.showDeleted, nil)
+			return m, m.scopeLoad(listObjectsCmd(ctx, m.client, m.bucket, m.prefix, m.search, m.showDeleted, nil))
 
 		case viewVersions:
 			m.inFlight++
+			ctx := m.startLoad()
 
-			return m, listVersionsCmd(m.ctx, m.client, m.bucket, m.key)
+			return m, m.scopeLoad(listVersionsCmd(ctx, m.client, m.bucket, m.key))
 		}
 	}
 
@@ -984,11 +1115,11 @@ func (m Model) openProfiles() (tea.Model, tea.Cmd) {
 
 // applyProfile swaps the client and starts over with the new profile.
 func (m Model) applyProfile(msg profileSwitchedMsg) (tea.Model, tea.Cmd) {
-	m.inFlight = max(0, m.inFlight-1)
-
+	m.stopBucket()
 	m.client = msg.client
 	m.profile = msg.name
 	m.profileCfg = msg.profile
+	m.profileRun++
 
 	m.view = viewBuckets
 	m.bucket, m.prefix, m.key = "", "", ""
@@ -1009,7 +1140,7 @@ func (m Model) applyProfile(msg profileSwitchedMsg) (tea.Model, tea.Cmd) {
 	m.buckets.ResetFilter()
 	m.inFlight++
 
-	return m, listBucketsCmd(m.ctx, m.client)
+	return m, listBucketsCmd(m.ctx, m.client, m.profileRun)
 }
 
 // open descends into the selected item.
@@ -1022,14 +1153,18 @@ func (m Model) open() (tea.Model, tea.Cmd) {
 		}
 
 		if selected.name == m.profile && m.client != nil {
+			// Choosing the current profile also cancels a connection which may
+			// still be under way for another selection.
+			m.switchRun++
 			m.view = m.prevView
 
 			return m, nil
 		}
 
 		m.inFlight++
+		m.switchRun++
 
-		return m, switchProfileCmd(m.ctx, selected.name, selected.profile, m.version)
+		return m, switchProfileCmd(m.ctx, selected.name, selected.profile, m.version, m.switchRun)
 
 	case viewBuckets:
 		selected, ok := m.buckets.SelectedItem().(bucketItem)
@@ -1047,8 +1182,9 @@ func (m Model) open() (tea.Model, tea.Cmd) {
 		m.menu.SetItems(bucketMenu())
 		m.menu.ResetSelected()
 		m.inFlight++
+		ctx := m.startBucket()
 
-		return m, bucketVersioningCmd(m.ctx, m.client, m.bucket)
+		return m, m.scopeBucket(bucketVersioningCmd(ctx, m.client, m.bucket))
 
 	case viewBucketMenu:
 		selected, ok := m.menu.SelectedItem().(menuItem)
@@ -1078,8 +1214,9 @@ func (m Model) open() (tea.Model, tea.Cmd) {
 		m.parts.SetItems(nil)
 		m.parts.ResetFilter()
 		m.inFlight++
+		ctx := m.startLoad()
 
-		return m, listPartsCmd(m.ctx, m.client, m.bucket, m.key, m.uploadID)
+		return m, m.scopeLoad(listPartsCmd(ctx, m.client, m.bucket, m.key, m.uploadID))
 
 	case viewVersions:
 		// one level deeper than a version is its own overview
@@ -1099,8 +1236,9 @@ func (m Model) open() (tea.Model, tea.Cmd) {
 			m.objects.SetItems(nil)
 			m.objects.ResetFilter()
 			m.inFlight++
+			ctx := m.startLoad()
 
-			return m, listObjectsCmd(m.ctx, m.client, m.bucket, m.prefix, m.search, m.showDeleted, nil)
+			return m, m.scopeLoad(listObjectsCmd(ctx, m.client, m.bucket, m.prefix, m.search, m.showDeleted, nil))
 		}
 
 		// without versioning there is no list of versions to step through,
@@ -1117,8 +1255,9 @@ func (m Model) open() (tea.Model, tea.Cmd) {
 		m.versions.SetItems(nil)
 		m.versions.ResetFilter()
 		m.inFlight++
+		ctx := m.startLoad()
 
-		return m, listVersionsCmd(m.ctx, m.client, m.bucket, m.key)
+		return m, m.scopeLoad(listVersionsCmd(ctx, m.client, m.bucket, m.key))
 	}
 
 	return m, nil
@@ -1127,6 +1266,10 @@ func (m Model) open() (tea.Model, tea.Cmd) {
 // back leaves the current level.
 func (m Model) back() (tea.Model, tea.Cmd) {
 	m.err, m.status = nil, ""
+	switch m.view {
+	case viewConfig, viewParts, viewMultipart, viewStats, viewVersions, viewObjects:
+		m.stopLoad()
+	}
 
 	switch m.view {
 	case viewProfiles:
@@ -1180,6 +1323,7 @@ func (m Model) back() (tea.Model, tea.Cmd) {
 	case viewBucketMenu:
 		m.view = viewBuckets
 		m.bucket = ""
+		m.stopBucket()
 
 		return m, nil
 
@@ -1202,8 +1346,9 @@ func (m Model) back() (tea.Model, tea.Cmd) {
 			m.objects.SetItems(nil)
 			m.objects.ResetFilter()
 			m.inFlight++
+			ctx := m.startLoad()
 
-			return m, listObjectsCmd(m.ctx, m.client, m.bucket, m.prefix, m.search, m.showDeleted, nil)
+			return m, m.scopeLoad(listObjectsCmd(ctx, m.client, m.bucket, m.prefix, m.search, m.showDeleted, nil))
 		}
 
 		m.view = viewBucketMenu
@@ -1223,8 +1368,9 @@ func (m Model) loadMore() (tea.Model, tea.Cmd) {
 	token := m.nextToken
 	m.nextToken = nil
 	m.inFlight++
+	ctx := m.startLoad()
 
-	return m, listObjectsCmd(m.ctx, m.client, m.bucket, m.prefix, m.search, m.showDeleted, token)
+	return m, m.scopeLoad(listObjectsCmd(ctx, m.client, m.bucket, m.prefix, m.search, m.showDeleted, token))
 }
 
 // forwardToList hands the message to the list of the current view.

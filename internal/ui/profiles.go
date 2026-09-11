@@ -54,21 +54,23 @@ func profileItems(cfg config.Config, active string) []list.Item {
 
 // profileSwitchedMsg carries the client of the newly selected profile.
 type profileSwitchedMsg struct {
+	run     uint64
 	name    string
 	profile config.Profile
 	client  *awsclient.Client
+	err     error
 }
 
 // switchProfileCmd builds the client of the given profile.
-func switchProfileCmd(ctx context.Context, name string, profile config.Profile, userAgent string) tea.Cmd {
+func switchProfileCmd(ctx context.Context, name string, profile config.Profile, userAgent string, run uint64) tea.Cmd {
 	return func() tea.Msg {
 		profile = profile.ApplyEnv()
 
 		client, err := awsclient.New(ctx, profile, userAgent)
 		if err != nil {
-			return fail("switching to profile "+name, err)
+			return profileSwitchedMsg{run: run, name: name, err: err}
 		}
 
-		return profileSwitchedMsg{name: name, profile: profile, client: client}
+		return profileSwitchedMsg{run: run, name: name, profile: profile, client: client}
 	}
 }

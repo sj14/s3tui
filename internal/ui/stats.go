@@ -529,8 +529,9 @@ func (m Model) openStats() (tea.Model, tea.Cmd) {
 	m.details.GotoTop()
 	m.renderStats()
 	m.inFlight++
+	ctx := m.startLoad()
 
-	return m, statsPageCmd(m.ctx, m.client, m.stats.bucket, m.stats.run, m.stats.versions, nil)
+	return m, m.scopeLoad(statsPageCmd(ctx, m.client, m.stats.bucket, m.stats.run, m.stats.versions, nil))
 }
 
 // renderStats rebuilds the content of the statistics view.

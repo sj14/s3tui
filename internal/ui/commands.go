@@ -24,7 +24,9 @@ type errMsg struct {
 }
 
 type bucketsMsg struct {
+	run   uint64
 	items []list.Item
+	err   error
 }
 
 type objectsMsg struct {
@@ -60,7 +62,7 @@ func fail(what string, err error) tea.Msg {
 	return errMsg{what: what, err: err}
 }
 
-func listBucketsCmd(ctx context.Context, client *awsclient.Client) tea.Cmd {
+func listBucketsCmd(ctx context.Context, client *awsclient.Client, run uint64) tea.Cmd {
 	return func() tea.Msg {
 		var (
 			items []list.Item
@@ -70,7 +72,7 @@ func listBucketsCmd(ctx context.Context, client *awsclient.Client) tea.Cmd {
 		for {
 			resp, err := client.Base().ListBuckets(ctx, &s3.ListBucketsInput{ContinuationToken: token})
 			if err != nil {
-				return fail("listing buckets", err)
+				return bucketsMsg{run: run, err: err}
 			}
 
 			for _, bucket := range resp.Buckets {
@@ -92,7 +94,7 @@ func listBucketsCmd(ctx context.Context, client *awsclient.Client) tea.Cmd {
 			}
 		}
 
-		return bucketsMsg{items: items}
+		return bucketsMsg{run: run, items: items}
 	}
 }
 

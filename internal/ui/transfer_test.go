@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/sj14/s3tui/internal/awsclient"
@@ -407,6 +408,130 @@ func TestSwitchProfile(t *testing.T) {
 	}
 	if !strings.Contains(got.status, "switched to profile other") {
 		t.Errorf("status = %q", got.status)
+	}
+}
+
+func TestProfileSwitchDropsStaleBucketListing(t *testing.T) {
+	server := fakeS3(t)
+	model := newTestModel(t, server.URL)
+
+	inner := model.(Model)
+	client := inner.client
+
+	// Profile "other" connects and starts a bucket listing.
+	inner.switchRun = 1
+	inner.inFlight++
+	model, _ = inner.Update(profileSwitchedMsg{
+		run: 1, name: "other", profile: inner.cfg.Profiles["other"], client: client,
+	})
+	otherRun := model.(Model).profileRun
+
+	// Before that listing returns, switch back to "default" and start its
+	// listing. The earlier response must not replace the current buckets.
+	inner = model.(Model)
+	inner.switchRun = 2
+	inner.inFlight++
+	model, _ = inner.Update(profileSwitchedMsg{
+		run: 2, name: "default", profile: inner.cfg.Profiles["default"], client: client,
+	})
+	defaultRun := model.(Model).profileRun
+
+	model, _ = model.Update(bucketsMsg{
+		run: otherRun,
+		items: []list.Item{
+			bucketItem{name: "wrong-profile-bucket"},
+		},
+	})
+	if got := len(model.(Model).buckets.Items()); got != 0 {
+		t.Fatalf("stale listing installed %d buckets", got)
+	}
+
+	model, _ = model.Update(bucketsMsg{
+		run: defaultRun,
+		items: []list.Item{
+			bucketItem{name: "default-bucket"},
+		},
+	})
+	items := model.(Model).buckets.Items()
+	if len(items) != 1 || items[0].(bucketItem).name != "default-bucket" {
+		t.Fatalf("current listing was not installed: %+v", items)
+	}
+}
+
+func TestLatestProfileConnectionWins(t *testing.T) {
+	server := fakeS3(t)
+	model := newTestModel(t, server.URL)
+
+	inner := model.(Model)
+	inner.switchRun = 2
+	inner.inFlight += 2
+
+	model, _ = inner.Update(profileSwitchedMsg{
+		run: 1, name: "other", profile: inner.cfg.Profiles["other"], client: inner.client,
+	})
+	if got := model.(Model).profile; got != "default" {
+		t.Fatalf("stale connection switched to profile %q", got)
+	}
+}
+
+func TestBackCancelsForegroundLoad(t *testing.T) {
+	server := fakeS3(t)
+	inner := newTestModel(t, server.URL).(Model)
+	inner.bucket = "bucket-a"
+	inner.view = viewObjects
+	inner.startBucket()
+	ctx := inner.startLoad()
+	bucketRun, loadRun := inner.bucketRun, inner.loadRun
+	inner.inFlight++
+
+	model, _ := inner.back()
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("leaving the view did not cancel its request context")
+	}
+
+	// Even if the command completed just before cancellation and its message
+	// was already queued, its error is ignored with the obsolete generation.
+	model, _ = model.Update(loadScopedMsg{
+		bucketRun: bucketRun,
+		loadRun:   loadRun,
+		msg:       errMsg{what: "listing objects", err: context.Canceled},
+	})
+	if err := model.(Model).err; err != nil {
+		t.Errorf("obsolete cancellation became an error: %v", err)
+	}
+}
+
+func TestBucketGenerationRejectsABAResponse(t *testing.T) {
+	server := fakeS3(t)
+	inner := newTestModel(t, server.URL).(Model)
+
+	inner.bucket = "bucket-a"
+	inner.view = viewObjects
+	inner.startBucket()
+	inner.startLoad()
+	oldBucketRun, oldLoadRun := inner.bucketRun, inner.loadRun
+
+	inner.stopBucket()
+	inner.bucket = "bucket-b"
+	inner.startBucket()
+	inner.stopBucket()
+	inner.bucket = "bucket-a"
+	inner.startBucket()
+	inner.startLoad()
+	inner.inFlight++
+
+	model, _ := inner.Update(loadScopedMsg{
+		bucketRun: oldBucketRun,
+		loadRun:   oldLoadRun,
+		msg: objectsMsg{
+			bucket: "bucket-a",
+			items:  []list.Item{objectItem{name: "stale.txt", key: "stale.txt"}},
+		},
+	})
+	if got := len(model.(Model).objects.Items()); got != 0 {
+		t.Fatalf("the first visit to bucket-a installed %d stale objects after returning", got)
 	}
 }
 
