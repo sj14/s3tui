@@ -598,7 +598,7 @@ func TestObjectOverviewIsTheWayIn(t *testing.T) {
 	}
 
 	view := model.View()
-	for _, want := range []string{"file.txt", "metadata", "tags", "acl", "legal hold", "enter open", "esc back"} {
+	for _, want := range []string{"file.txt", "metadata", "tags", "acl", "legal hold", "retention", "enter open", "esc back"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("the object overview misses %q:\n%s", want, view)
 		}
@@ -646,6 +646,26 @@ func TestLegalHoldView(t *testing.T) {
 	for _, want := range []string{"[legal-hold]", "legal hold", `"Status": "ON"`} {
 		if !strings.Contains(view, want) {
 			t.Errorf("the legal hold view misses %q:\n%s", want, view)
+		}
+	}
+	if got.err != nil {
+		t.Errorf("unexpected error: %v", got.err)
+	}
+}
+
+func TestObjectRetentionView(t *testing.T) {
+	server := fakeS3(t)
+	model := openObjectConfig(t, server, configObjectRetention)
+
+	got := model.(Model)
+	view := model.View() + got.detailsContent
+
+	for _, want := range []string{
+		"[retention]", "object retention", `"Mode": "GOVERNANCE"`,
+		`"RetainUntilDate": "2030-01-02T03:04:05Z"`,
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the retention view misses %q:\n%s", want, view)
 		}
 	}
 	if got.err != nil {
@@ -713,6 +733,11 @@ func TestObjectConfigFooters(t *testing.T) {
 			t.Errorf("the footer of %v offers a delete which does not exist:\n%s", kind, footer)
 		}
 	}
+
+	footer := openObjectConfig(t, server, configObjectRetention).View()
+	if strings.Contains(footer, "e edit") || strings.Contains(footer, "d delete") {
+		t.Errorf("the read-only retention footer offers a mutation:\n%s", footer)
+	}
 }
 
 func TestObjectWithoutALegalHold(t *testing.T) {
@@ -734,6 +759,28 @@ func TestObjectWithoutALegalHold(t *testing.T) {
 	}
 	if got.err != nil {
 		t.Errorf("a missing legal hold must not be an error: %v", got.err)
+	}
+}
+
+func TestObjectWithoutRetention(t *testing.T) {
+	server := fakeS3(t)
+
+	model := enter(t, openBucket(t, server)) // into logs/
+
+	inner := model.(Model)
+	inner.objects.Select(0) // logs/nested.log, which has no retention
+
+	model = enter(t, tea.Model(inner)) // its versions
+	model = openConfigSection(t, enter(t, model), configObjectRetention)
+
+	got := model.(Model)
+	view := model.View() + got.detailsContent
+
+	if !strings.Contains(view, "no retention") {
+		t.Errorf("the view misses the note:\n%s", view)
+	}
+	if got.err != nil {
+		t.Errorf("missing retention must not be an error: %v", got.err)
 	}
 }
 

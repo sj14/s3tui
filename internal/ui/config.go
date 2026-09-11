@@ -31,6 +31,7 @@ const (
 	configObjectTags
 	configObjectACL
 	configObjectLegalHold
+	configObjectRetention
 )
 
 // configTarget is what a configuration belongs to: a whole bucket, or one
@@ -533,6 +534,40 @@ var configSpecs = []configSpec{
 			})
 
 			return err
+		},
+	},
+
+	configObjectRetention: {
+		name:    "object retention",
+		short:   "retention",
+		entry:   "retention",
+		about:   "how long the object is locked against deletion",
+		missing: "no retention",
+		object:  true,
+
+		get: func(ctx context.Context, client *s3.Client, target configTarget) (string, error) {
+			resp, err := client.GetObjectRetention(ctx, &s3.GetObjectRetentionInput{
+				Bucket:    aws.String(target.bucket),
+				Key:       aws.String(target.key),
+				VersionId: target.versionID(),
+			})
+			if err != nil {
+				// A bucket without object lock answers with a plain
+				// InvalidRequest, which means there is no retention to show.
+				var apiErr smithy.APIError
+				if errors.As(err, &apiErr) && apiErr.ErrorCode() == "InvalidRequest" {
+					return "", nil
+				}
+
+				return "", err
+			}
+
+			if resp.Retention == nil ||
+				(resp.Retention.Mode == "" && resp.Retention.RetainUntilDate == nil) {
+				return "", nil
+			}
+
+			return documentOf(resp.Retention)
 		},
 	},
 }

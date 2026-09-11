@@ -412,6 +412,10 @@ func fakeS3(t *testing.T) *fakeServer {
 				store: map[string]string{"bucket-a/file.txt": defaultLegalHold},
 				code:  "NoSuchObjectLockConfiguration",
 			},
+			"retention": {
+				store: map[string]string{"bucket-a/file.txt": defaultRetention},
+				code:  "NoSuchObjectLockConfiguration",
+			},
 		},
 	}
 
@@ -1568,7 +1572,7 @@ func configTargetOf(bucket, key string) string {
 func configResourceName(query url.Values) string {
 	for _, name := range []string{
 		"policy", "lifecycle", "acl", "publicAccessBlock", "cors", "versioning",
-		"object-lock", "legal-hold", "tagging",
+		"object-lock", "legal-hold", "retention", "tagging",
 	} {
 		if query.Has(name) {
 			return name
@@ -1635,6 +1639,9 @@ const (
 
 	defaultLegalHold = `<?xml version="1.0" encoding="UTF-8"?>
 <LegalHold><Status>ON</Status></LegalHold>`
+
+	defaultRetention = `<?xml version="1.0" encoding="UTF-8"?>
+<Retention><Mode>GOVERNANCE</Mode><RetainUntilDate>2030-01-02T03:04:05Z</RetainUntilDate></Retention>`
 
 	defaultObjectLock = `<?xml version="1.0" encoding="UTF-8"?>
 <ObjectLockConfiguration><ObjectLockEnabled>Enabled</ObjectLockEnabled>
