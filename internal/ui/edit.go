@@ -199,8 +199,7 @@ func emptyDocument(spec configSpec) error {
 // describeWrite keeps a complaint about the document as it is – nothing was
 // sent – and puts everything else below what was attempted.
 func describeWrite(err error, what string) error {
-	var typo documentError
-	if errors.As(err, &typo) {
+	if typo, ok := errors.AsType[documentError](err); ok {
 		return typo
 	}
 

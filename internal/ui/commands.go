@@ -527,8 +527,7 @@ func configCmd(ctx context.Context, client *awsclient.Client, target configTarge
 // describeMissing turns "nothing configured" into a note and keeps every other
 // error readable, so one missing setting does not break the whole view.
 func describeMissing(err error, missing string) string {
-	var apiErr smithy.APIError
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[smithy.APIError](err); ok {
 		switch apiErr.ErrorCode() {
 		case "NoSuchBucketPolicy", "NoSuchLifecycleConfiguration", "NoSuchConfiguration",
 			"NoSuchCORSConfiguration", "NoSuchPublicAccessBlockConfiguration",

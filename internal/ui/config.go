@@ -502,8 +502,7 @@ var configSpecs = []configSpec{
 			if err != nil {
 				// A bucket without object lock answers with a plain
 				// InvalidRequest, which says nothing to read here either.
-				var apiErr smithy.APIError
-				if errors.As(err, &apiErr) && apiErr.ErrorCode() == "InvalidRequest" {
+				if apiErr, ok := errors.AsType[smithy.APIError](err); ok && apiErr.ErrorCode() == "InvalidRequest" {
 					return "", nil
 				}
 
@@ -554,8 +553,7 @@ var configSpecs = []configSpec{
 			if err != nil {
 				// A bucket without object lock answers with a plain
 				// InvalidRequest, which means there is no retention to show.
-				var apiErr smithy.APIError
-				if errors.As(err, &apiErr) && apiErr.ErrorCode() == "InvalidRequest" {
+				if apiErr, ok := errors.AsType[smithy.APIError](err); ok && apiErr.ErrorCode() == "InvalidRequest" {
 					return "", nil
 				}
 
