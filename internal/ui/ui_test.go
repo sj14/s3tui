@@ -717,7 +717,7 @@ func newTestModel(t *testing.T, endpoint string) tea.Model {
 		t.Fatalf("creating client: %v", err)
 	}
 
-	cfg := config.Config{Profiles: map[string]config.Profile{"default": profile, "other": {Endpoint: endpoint, Region: "us-east-1"}}}
+	cfg := config.Config{Profiles: map[string]config.Profile{"default": profile, "other": {Endpoint: endpoint, Region: "us-east-1", AccessKey: "key", SecretKey: "secret"}}}
 
 	model := tea.Model(New(context.Background(), client, "default", profile, cfg, "test"))
 	model = step(t, model, tea.WindowSizeMsg{Width: 100, Height: 24})
